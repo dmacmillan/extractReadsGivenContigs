@@ -1,4 +1,4 @@
-__version__ = 0.0.1
+__version__ = '0.0.2'
 
 import argparse,os,sys,logging
 try:
@@ -9,7 +9,6 @@ except ImportError:
 parser = argparse.ArgumentParser(description='Given a .bam or .sam alignment file containing contigs aligned to some reference, and .bam or .sam files containing reads aligned to said contigs, return all reads aligned to contigs in .bam or .sam format')
 parser.add_argument('c2g',metavar='<contig-alignments>',help='The .bam or .sam file containing your contigs of interest aligned to some reference. Make sure you have the appropriate header for whatever reference you used.')
 parser.add_argument('r2cs',metavar='<read-to-contig-alignments>',nargs='+',help='One or more .bam or .sam files containing reads aligned to the contigs in the previous argument.')
-parser.add_argument('-n','--no-mate',action='store_true',help='This flag will set all reads next reference ids to unmapped.')
 parser.add_argument('-o','--outfile',default="./r2c_sorted",help='The file to output the results to. Default is "./r2c_sorted".')
 parser.add_argument('-f','--output-format',default='bam',choices=['bam','sam'],help='Specify what format (bam or sam) to output the results in. Default is "bam".')
 parser.add_argument('-l','--log-level',choices=['debug','info','warning'],help='Set the level of log messages to see. Default is "warning".')
@@ -45,10 +44,10 @@ fasta_file = open('merged.fa','w')
 
 for i,alignment in enumerate(c2g):
     fcode, tcode, lib, name = alignment.query_name.split('_')
-    header['SQ'].append({'LN': alignment.reference_length,'SN': name})
+    header['SQ'].append({'LN': alignment.reference_length,'SN': alignment.query_name})
     # For each read file
     results[name] = {'name': alignment.query_name,'fcode':fcode,'tcode':tcode,'lib':lib,'reads':[],'index':i}
-    fasta_file.write('>{}\n{}\n'.format(name,alignment.seq))
+    fasta_file.write('>{}\n{}\n'.format(alignment.query_name,alignment.seq))
 c2g.close()
 
 logging.debug('results = {}'.format(results))
@@ -70,37 +69,12 @@ for readfile in args.r2cs:
     # For each read in the file matching the contig
     for contig in results:
         for read in r2c.fetch(contig):
+            read.query_name = '_'.join(results[contig]['name'].split('_')[:-1]) + '_' + read.query_name
             # Alter the read reference id
             refname = r2c.getrname(read.reference_id)
             read.reference_id = results[refname]['index']
-            if args.no_mate:
-                read.next_reference_id = -1
-            if read.next_reference_id != -1:
-                nextrefname = r2c.getrname(read.next_reference_id)
-                if (nextrefname not in results):
-                    if (nextrefname not in contigs_to_add):
-                        contigs_to_add[nextrefname] = headerlen
-                        headerlen += 1
-                    read.next_reference_id = contigs_to_add[nextrefname]
-                else:
-                    read.next_reference_id = results[nextrefname]['index']
-                #logging.debug('ref_id = {}'.format(read.reference_id))
-                logging.debug('{}: ref_id = {} = {}; next_ref_id = {} = {}'.format(read.query_name,read.reference_id,refname,read.next_reference_id,nextrefname))
+            read.next_reference_id = -1
             results[contig]['reads'].append(read)
-    if not args.no_mate:
-        contigs_to_add = sorted(contigs_to_add, key = contigs_to_add.get)
-        logging.debug('contigs_to_add (len={}) = {}'.format(len(contigs_to_add),contigs_to_add))
-        breakpoint = len(contigs_to_add)
-        for head in r2c.header['SQ']:
-            if breakpoint == 0:
-                break
-            if head['SN'] not in contigs_to_add:
-                continue
-            logging.debug('contigs_to_add[{}] = {}'.format(contigs_to_add.index(head['SN']),contigs_to_add[contigs_to_add.index(head['SN'])],head))
-            contigs_to_add[contigs_to_add.index(head['SN'])] = head
-            breakpoint -= 1
-        logging.debug('contigs_to_add after = {}'.format(contigs_to_add))
-        header['SQ'] += contigs_to_add
     r2c.close()
     
 # The reads-to-contigs output
